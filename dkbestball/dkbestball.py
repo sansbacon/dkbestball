@@ -3,29 +3,35 @@ import json
 import logging
 import os
 from pathlib import Path
-import pytz
 import re
-import time
 
 import numpy as np
 import pandas as pd
 
 """
-STEP ONE: get list of bestball contests
-https://www.draftkings.com/mycontests
-
-var contests has the contest information under 'live' (in-season at least)
-view source and then copy to file mycontests.html - can't save directly
-can also just copy and paste variable and then load file directly
-the variable isn't true json, as the keys are not quoted properly
-have maxentrantsperpage, live, upcoming, history
-
-
-STEP TWO:
+Log:
+* 10/9/2020: 
+next step is ownership method
+right now reads files rather than list of dict. Can get more code from ipython session 528. 
+select * from history where session = 528
 
 """
 
 class Parser:
+    """
+    STEP ONE: get list of bestball contests
+    https://www.draftkings.com/mycontests
+
+    var contests has the contest information under 'live' (in-season at least)
+    view source and then copy to file mycontests.html - can't save directly
+    can also just copy and paste variable and then load file directly
+    the variable isn't true json, as the keys are not quoted properly
+    have maxentrantsperpage, live, upcoming, history
+
+
+    STEP TWO:
+
+    """
     
     def __init__(self):
         logging.getLogger(__name__).addHandler(logging.NullHandler())
@@ -89,6 +95,14 @@ class Parser:
         return [dict(**draft_metadata, **{k: player[k] for k in wanted_scorecard})
                 for player in roster['scorecards']]       
                     
+    def filter_contests(self, data):
+        """Filters for specific type, say 3-Player"""
+        pass
+        #tm = [c for c in data if '3-Player' in c['ContestName']]
+        #for t in tm:
+        #    url = roster_url.format(t['DraftGroupId'], t['ContestEntryId'])
+        #    print(url)
+
     def is_bestball_contest(self, content):
         """Tests if it is a bestball contest
         
@@ -130,17 +144,47 @@ class Parser:
         else:
             raise ValueError('htmlfn or jsonfn cannot both be None')
 
+    def ownership(self, rosters):
+        """Calculates ownership across rosters
 
-    def filter_contests(self, data):
-        """Filters for specific type, say 3-Player"""
+        Args:
+            rosters (list): of dict
+
+        Returns:
+            list: of dict
+        """
         pass
-        #tm = [c for c in data if '3-Player' in c['ContestName']]
-        #for t in tm:
-        #    url = roster_url.format(t['DraftGroupId'], t['ContestEntryId'])
-        #    print(url)
 
+        """
+        picks = []
+        for pth in (Path.home() / 'dkleagues').glob('*.json'):
+            print(f'starting {pth}')
+            with pth.open('r') as f:
+                data = json.load(f)
+            for item in data['leaderBoard']:
+                contest_key = item['contestKey']
+                dgid = item['draftGroupId']
+                ek = item['entryKey']
+                owner = item['userName']
+                with (Path.home() / 'dkdrafts' / f'{ek}.json').open('r') as f:
+                    roster = json.load(f)
+                try:
+                    for p in roster['entries'][0]['roster']['scorecards']: 
+                        picks.append({'contest_key': contest_key,
+                        'draft_group_id': dgid,
+                        'entry_key': ek,
+                        'owner': owner,
+                        'player': p['displayName'], 
+                        'position': p['rosterPosition'], 
+                        'draftable_id': p['draftableId']
+                        })
+                except KeyError:
+                    print(f'{pth} failed')
+        """
 
- 
+    def standings(self, *args):
+        """Calculates league standings"""
+        pass
 
 
 if __name__ == '__main__':
