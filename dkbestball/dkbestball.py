@@ -37,6 +37,14 @@ class Parser:
         logging.getLogger(__name__).addHandler(logging.NullHandler())
         self.bestball_gametype_id = 145
 
+    def _to_dataframe(self, container):
+        """Converts container to dataframe"""
+        return pd.DataFrame(container)
+
+    def _to_obj(self, pth):
+        """Reads json text in pth and creates python object"""
+        return json.loads(pth.read_text())
+
     def contest(self, content):
         """Parses contest dict
         
@@ -74,7 +82,7 @@ class Parser:
         """
         lb = content['leaderBoard']
         wanted = ['userName', 'userKey', 'rank', 'fantasyPoints']
-        return {k:lb.get(k) for k in wanted}
+        return [{k:item.get(k) for k in wanted} for item in lb]
 
     def contest_roster(self, content):
         """Parses roster from single contest. DK doesn't seem to have saved draft order.
@@ -88,20 +96,19 @@ class Parser:
         # TODO: add stats and utilizations
         entry = content['entries'][0]
         wanted_metadata = ['draftGroupId', 'contestKey', 'entryKey', 'lineupId', 'userName', 'userKey']
-        wanted_scorecard = ['diplayName', 'draftableId']
+        wanted_scorecard = ['displayName', 'draftableId']
         draft_metadata = {k:entry.get(k) for k in wanted_metadata}
-        roster = entry['roster']
-        draft_metadata['rosterKey'] = roster['rosterKey']
-        return [dict(**draft_metadata, **{k: player[k] for k in wanted_scorecard})
-                for player in roster['scorecards']]       
-                    
-    def filter_contests(self, data):
-        """Filters for specific type, say 3-Player"""
-        pass
-        #tm = [c for c in data if '3-Player' in c['ContestName']]
-        #for t in tm:
-        #    url = roster_url.format(t['DraftGroupId'], t['ContestEntryId'])
-        #    print(url)
+        try:
+            roster = entry['roster']
+            return [dict(**draft_metadata, **{k: player[k] for k in wanted_scorecard})
+                    for player in roster['scorecards']]       
+        except KeyError:
+            logging.exception(entry)
+            return None
+
+    def filter_contests_by_size(self, data, size=None):
+        """Filters mycontests for specific type, say 3-Player"""
+        return [c for c in data if f'{size}-Player' in c['ContestName']]
 
     def is_bestball_contest(self, content):
         """Tests if it is a bestball contest
@@ -148,43 +155,38 @@ class Parser:
         """Calculates ownership across rosters
 
         Args:
-            rosters (list): of dict
+            rosters (list): of list of dict
 
         Returns:
-            list: of dict
+            DataFrame
         """
-        pass
+        # TODO: add player positions
+        flattened = [item for sublist in rosters for item in sublist]
+        df = pd.concat([self._to_dataframe(flattened).displayName.value_counts(),
+                        self._to_dataframe(flattened).displayName.value_counts(normalize=True)],
+                        axis=1).reset_index()
+        df.columns = ['player', 'n', 'pct']
+        return df
 
-        """
-        picks = []
-        for pth in (Path.home() / 'dkleagues').glob('*.json'):
-            print(f'starting {pth}')
-            with pth.open('r') as f:
-                data = json.load(f)
-            for item in data['leaderBoard']:
-                contest_key = item['contestKey']
-                dgid = item['draftGroupId']
-                ek = item['entryKey']
-                owner = item['userName']
-                with (Path.home() / 'dkdrafts' / f'{ek}.json').open('r') as f:
-                    roster = json.load(f)
-                try:
-                    for p in roster['entries'][0]['roster']['scorecards']: 
-                        picks.append({'contest_key': contest_key,
-                        'draft_group_id': dgid,
-                        'entry_key': ek,
-                        'owner': owner,
-                        'player': p['displayName'], 
-                        'position': p['rosterPosition'], 
-                        'draftable_id': p['draftableId']
-                        })
-                except KeyError:
-                    print(f'{pth} failed')
-        """
 
-    def standings(self, *args):
-        """Calculates league standings"""
-        pass
+    def standings(self, leaderboards, username):
+        """Calculates overall standings for user by contest type
+        
+        Args:
+            leaderboards (list): of list of dict
+            username (str): the user to track standings for
+
+        Returns:
+            DataFrame
+        """
+        items = []
+        for lb in leaderboards:
+            match = [item for item in lb if item['userName'] == username]
+            if match:
+                match = match[0]
+                match['contest_size'] = len(lb)
+                items.append(match)
+        return pd.DataFrame(items)
 
 
 if __name__ == '__main__':
