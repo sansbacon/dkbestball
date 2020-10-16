@@ -1,4 +1,5 @@
 import json
+import os
 import random
 
 import pandas as pd
@@ -38,48 +39,81 @@ def p():
 
 
 @pytest.fixture
+def player_name():
+    players = ('Alvin Kamara', 'Michael Thomas', 'Ezekiel Elliott')
+    return random.choice(players)
+
+
+@pytest.fixture
 def rosterfile(test_directory):
     return test_directory / 'contest_roster.json'
 
 
-def test_mycontests(p, mycontestfile, tprint):
-    """Tests mycontests"""
-    contests = p.mycontests(mycontestfile)
-    assert isinstance(contests, list)
-    assert isinstance(random.choice(contests), dict)
-    tprint(set([item['ContestName'] for item in contests]))
+@pytest.fixture
+def username():
+    try:
+        return MY_USERNAME
+    except NameError:
+        un = os.getenv('DK_BESTBALL_USERNAME')
+        if un:
+            return un
+        else:
+            return 'sansbacon'
+
+def test_pctcol(p):
+    """Tests pctcol"""
+    v = .0512
+    assert p._pctcol(v) == '5.12%'
 
 
-def test_is_bestball_contest(p, contestfile, dfscontest):
-    """Tests is_bestball_contest"""
-    contest = json.loads(contestfile.read_text())
-    assert p.is_bestball_contest(contest)
-    assert not p.is_bestball_contest(dfscontest)
+def test_contest_type(p, dfscontest):
+    """Tests _contest_type"""
+    assert p._contest_type(dfscontest) == 'sit_and_go'
 
 
-def test_contest_details(p, contestfile, tprint):
+def test_draftablesfn(p):
+    """Tests _draftablesfn"""
+    id = 37604
+    assert p._draftablesfn(id).is_file()
+
+
+def test_to_dataframe(p):
+    """Tests to_dataframe"""
+    c = {'a': [1, 2, 3], 'b': [4, 5, 6]}
+    df = p._to_dataframe(c)
+    assert df.iloc[0, 0] == 1
+
+
+def test_to_obj(p):
+    """Tests to_obj"""
+    pth = p._draftablesfn(37604)
+    obj = p._to_obj(pth)
+    assert isinstance(obj, dict)
+
+
+def test_contest_details(p, contestfile):
     """Tests contest_roster"""
     c = p.contest_details(p._to_obj(contestfile))
-    fields = {'ContestId', 'ContestName', 'BuyInAmount', 'MaxNumberPlayers', 'DraftGroupId', 'GameTypeId', 'TopPayout',
-              'UserContestId', 'ResultsRank', 'TotalPointsOpp', 'UsernameOpp', 'PlayerPoints'}
-    tprint(c)
+    fields = {'ContestId', 'ContestName', 'BuyInAmount', 'MaxNumberPlayers', 
+              'DraftGroupId', 'GameTypeId', 'TopPayout',
+              'UserContestId', 'ResultsRank', 'TotalPointsOpp', 
+              'UsernameOpp', 'PlayerPoints', 'ContestType', 'ClockType'}
     assert set(c.keys()) == fields
-    
+
 
 def test_contest_leaderboard(p, leaderboardfile):
     """Tests contest_leaderboard"""
     lb = p.contest_leaderboard(json.loads(leaderboardfile.read_text()))
     assert isinstance(lb, list)
     assert isinstance(random.choice(lb), dict)
-    fields = {'userName', 'userKey', 'rank', 'fantasyPoints'}
+    fields = {'userName', 'userKey', 'rank', 'fantasyPoints', 'contestKey'}
     for item in lb:
         assert fields == set(item.keys())
 
 
-def test_contest_roster(p, rosterfile, tprint):
+def test_contest_roster(p, rosterfile):
     """Tests contest_roster"""
     roster = p.contest_roster(json.loads(rosterfile.read_text()))
-    tprint(p._to_dataframe(roster))    
     assert isinstance(roster, list)
     assert isinstance(random.choice(roster), dict)
 
@@ -93,24 +127,65 @@ def test_filter_contests_by_size(p, mycontestfile):
         assert f'{size}-Player' in contest['ContestName']
     
 
-def test_ownership(p, datadir, tprint):
+def test_is_bestball_contest(p, contestfile, dfscontest):
+    """Tests is_bestball_contest"""
+    contest = json.loads(contestfile.read_text())
+    assert p.is_bestball_contest(contest)
+    assert not p.is_bestball_contest(dfscontest)
+  
+
+def test_mycontests(p, mycontestfile, tprint):
+    """Tests mycontests"""
+    contests = p.mycontests(mycontestfile)
+    assert isinstance(contests, list)
+    assert isinstance(random.choice(contests), dict)
+    tprint(set([item['ContestName'] for item in contests]))
+
+
+def test_ownership(p, player_name, username):
     """Tests ownership"""
-    rosterdir = datadir / 'dkdrafts'
-
     # rosters is a list of lists
+    rosterfiles = list(p.ROSTER_DIR.glob('*.json'))
     rosters = [p.contest_roster(p._to_obj(f))
-               for f in random.sample(list(rosterdir.glob('*.json')), 3)]
-    df = p.ownership(rosters)
-    assert not df.empty
+               for f in random.sample(rosterfiles, 3)]
+    rosterdf = p._to_dataframe([item for sublist in rosters for item in sublist])
+    df = p.ownership(rosterdf, username=username)
+    assert not df.loc[player_name, :].empty
 
 
-def test_standings(p, datadir, tprint):
+def test_player_pool(p, tprint):
+    id = random.choice((37604, 37605))
+    pool = p.player_pool(id=id)
+    assert isinstance(pool, list)
+    player = random.choice(pool)
+    assert isinstance(player, dict)
+    fields = {'draftableId', 'playerId', 'playerDkId', 'teamId',
+              'displayName', 'position', 'teamAbbreviation'}
+    assert fields == set(player.keys())
+    
+
+def test_player_pool_dict(p):
+    id = random.choice((37604, 37605))
+    playerd = p.player_pool_dict(id=id)
+    assert isinstance(playerd, dict)
+    key = random.choice(list(playerd.keys()))
+    assert isinstance(key, int)
+    player = playerd[key]
+    assert isinstance(player, dict)
+    fields = {'playerId', 'playerDkId', 'displayName', 'position', 'teamAbbreviation'}
+    assert fields == set(player.keys())
+    
+
+def test_standings(p, datadir, username, tprint):
     """Tests standings"""
-    lbdir = datadir / 'dkleagues'
-        
-    # leaderboards is a list of lists
-    leaderboards = [p.contest_leaderboard(p._to_obj(f))
-                   for f in random.sample(list(lbdir.glob('*.json')), 10)]
-    df = p.standings(leaderboards, 'sansbacon')
-    tprint(df)
-    assert not df.empty
+    # get random sampling of leaderboards
+    leaderboards = []
+    paths = random.sample(list(p.LEADERBOARD_DIR.glob('*.json')), 10)
+    for pth in paths:
+        leaderboards += p.contest_leaderboard(p._to_obj(pth))
+    assert isinstance(leaderboards, list)
+
+    # test standings df
+    df = p.standings(leaderboards, username)
+    fields = {'userName', 'userKey', 'rank', 'fantasyPoints', 'contestKey'}
+    assert set(df.columns) == fields

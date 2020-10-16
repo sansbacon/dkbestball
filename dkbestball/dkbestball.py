@@ -69,6 +69,9 @@ class Parser:
     DATADIR = Path(__file__).parent / 'data'
     LEADERBOARD_DIR = DATADIR / 'leaderboards'
     ROSTER_DIR = DATADIR / 'rosters'
+    PLAYERPOOL_FIELDS = ['draftableId', 'playerId', 'playerDkId',
+                         'displayName', 'position', 'teamAbbreviation']
+       
 
     def __init__(self):
         logging.getLogger(__name__).addHandler(logging.NullHandler())
@@ -83,7 +86,7 @@ class Parser:
         return 'tournament' if 'Tournament' in contest['ContestName'] else 'sit_and_go'
 
     def _draftablesfn(self, id):
-            return self.DATADIR / f'draftables_{id}.json'
+        return self.DATADIR / f'draftables_{id}.json'
 
     def _to_dataframe(self, container):
         """Converts container to dataframe"""
@@ -256,13 +259,13 @@ class Parser:
         df.insert(0, 'n_contests', n_contests)
         return df    
 
-    def player_pool(self, draftables=None, id=None):
+    def player_pool(self, id=None, draftables=None):
         """Takes parsed draftables (from file or request) and creates player pool
            Can also pass id and will read draftables file from data directory
 
         Args:
-            draftables (dict): parsed JSON resource 
             id (int): draftables Id
+            draftables (dict): parsed JSON resource 
 
         Returns:
             list: of dict with keys
@@ -273,24 +276,24 @@ class Parser:
             draftables = self._to_obj(fn)
         if not isinstance(draftables, dict):
             raise ValueError('Did not properly load draftables')
-        wanted = ('draftableId', 'playerId', 'playerDkId', 'teamId',
-                'displayName', 'position', 'teamAbbreviation')
+        wanted = self.PLAYERPOOL_FIELDS
         return [{k: item[k] for k in wanted} for item in draftables['draftables']]
     
-    def player_pool_dict(self, draftables=None, id=None):
+    def player_pool_dict(self, id=None, draftables=None):
         """Takes parsed draftables (from file or request) and creates player pool dict with key of draftableId
            Can also pass id and will read draftables file from data directory
 
         Args:
-            draftables (dict): parsed JSON resource 
             id (int): draftables Id
+            draftables (dict): parsed JSON resource 
 
         Returns:
             dict of dict: key is draftableId, 
             value is dict with keys 'displayName', 'playerId', 'playerDkId', 'position', 'teamAbbreviation'
         """
-        wanted = ('displayName', 'playerId', 'playerDkId', 'position', 'teamAbbreviation')
-        return {item['draftableId']: {k:item[k] for k in wanted}
+        wanted = self.PLAYERPOOL_FIELDS.copy()
+        key = wanted.pop(0)
+        return {item[key]: {k:item[k] for k in wanted}
                 for item in self.player_pool(draftables=draftables, id=id)}
     
     def standings(self, leaderboards, username):
