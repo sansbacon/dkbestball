@@ -57,9 +57,9 @@ def test_is_bestball_contest(p, contestfile, dfscontest):
     assert not p.is_bestball_contest(dfscontest)
 
 
-def test_contest(p, contestfile, tprint):
+def test_contest_details(p, contestfile, tprint):
     """Tests contest_roster"""
-    c = p.contest(json.loads(contestfile.read_text()))
+    c = p.contest_details(p._to_obj(contestfile))
     fields = {'ContestId', 'ContestName', 'BuyInAmount', 'MaxNumberPlayers', 'DraftGroupId', 'GameTypeId', 'TopPayout',
               'UserContestId', 'ResultsRank', 'TotalPointsOpp', 'UsernameOpp', 'PlayerPoints'}
     tprint(c)

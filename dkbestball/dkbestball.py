@@ -1,3 +1,4 @@
+# %%
 import datetime
 import json
 import logging
@@ -19,7 +20,9 @@ select * from history where session = 528
 
 class Parser:
     """
-    STEP ONE: get list of bestball contests
+    >>> p = Parser()
+
+    STEP ONE: get list of bestball contests (mycontests)
     https://www.draftkings.com/mycontests
 
     var contests has the contest information under 'live' (in-season at least)
@@ -27,15 +30,60 @@ class Parser:
     can also just copy and paste variable and then load file directly
     the variable isn't true json, as the keys are not quoted properly
     have maxentrantsperpage, live, upcoming, history
-
-
-    STEP TWO:
-
-    """
     
+    >>> mycontestsfile = Path.home() / 'workspace' / 'dkbestball' / 'tests' / 'mycontests.html'
+    >>> mycontests = p.mycontests(mycontestsfile)
+
+    STEP TWO: extract relevant data from mycontests
+    so for each contest in mycontests, call contest_details
+    create dict of dicts with key = ContestId
+
+    >>> contest_details_dict = {c['ContestId']: p.contest_details(c) for c in mycontests}
+     
+    STEP THREE: get playerpool
+    for 2020, have draftgroup of 37604 or 37605
+    can get playerpool for both to match up with contests
+
+    >>> pool = {id: p.player_pool(id=id) for id in (37604, 37605)}
+
+    STEP FOUR: get contest standings (DK calls these leaderboards)
+    >>> lb = []
+    ... for pth in p.LEADERBOARD_DIR.glob('*.json'):
+    ...     data = p._to_obj(pth)
+    ...     lb += p.contest_leaderboard(data)
+
+    STEP FIVE: get contest rosters
+    >>> rosters = []
+    ... for pth in p.ROSTER_DIR.glob('*.json'):
+    ...     data = p._to_obj(pth)
+    ...     playerd = p.player_pool_dict(id=data['entries'][0]['draftGroupId'])
+    ...     rosters += p.contest_roster(data, playerd)
+
+    STEP SIX: match contest details to rosters
+    Create a dict of contestkey: contest size
+    >>> sized = {item['ContestId']: item['MaxNumberPlayers'] for item in contest_details_dict.values()}
+    ... for roster in rosters:
+    ...     contest_key = int(roster['contestKey'])
+    ...     roster['MaxNumberPlayers'] = sized.get(contest_key)    
+    """
+    DATADIR = Path(__file__).parent / 'data'
+    LEADERBOARD_DIR = DATADIR / 'leaderboards'
+    ROSTER_DIR = DATADIR / 'rosters'
+
     def __init__(self):
         logging.getLogger(__name__).addHandler(logging.NullHandler())
         self.bestball_gametype_id = 145
+
+    @staticmethod
+    def _pctcol(val):
+        return f'{round(val * 100, 2)}%'
+        
+    def _contest_type(self, contest):
+        """Determines if tournament or sit_and_go"""
+        return 'tournament' if 'Tournament' in contest['ContestName'] else 'sit_and_go'
+
+    def _draftablesfn(self, id):
+            return self.DATADIR / f'draftables_{id}.json'
 
     def _to_dataframe(self, container):
         """Converts container to dataframe"""
@@ -43,11 +91,15 @@ class Parser:
 
     def _to_obj(self, pth):
         """Reads json text in pth and creates python object"""
+        if isinstance(pth, str):
+            pth = Path(pth)
         return json.loads(pth.read_text())
 
-    def contest(self, content):
-        """Parses contest dict
-        
+    def contest_details(self, contest):
+        """Parses contest dict for relevant details
+           Some overlap with leaderboards re: contest leader (UsernameOpp, TotalPointsOpp) 
+           and your entry (UserContestId, ResultsRank, PlayerPoints)
+
         Args:
             content (dict): single contest dict
 
@@ -69,7 +121,10 @@ class Parser:
             'PlayerPoints'
         ]
 
-        return {k:content.get(k) for k in wanted}
+        d = {k:contest.get(k) for k in wanted}
+        d['ContestType'] = self._contest_type(contest)
+        d['ClockType'] = 'slow' if 'Slow Draft' in contest['ContestName'] else 'fast'
+        return d
 
     def contest_leaderboard(self, content):
         """Parses contest leaderboard
@@ -80,31 +135,42 @@ class Parser:
         Returns:
             list: of dict
         """
-        lb = content['leaderBoard']
+        vals = []
         wanted = ['userName', 'userKey', 'rank', 'fantasyPoints']
-        return [{k:item.get(k) for k in wanted} for item in lb]
+        for item in content['leaderBoard']:
+            d = {k:item.get(k) for k in wanted}
+            d['contestKey'] = content['contestKey']
+            vals.append(d)
+        return vals
 
-    def contest_roster(self, content):
+    def contest_roster(self, content, playerd=None):
         """Parses roster from single contest. DK doesn't seem to have saved draft order.
 
         Args:
             content (dict): parsed draft resource
-
+            playerd (dict): additional player data
+        
         Returns:
             list: of dict
+        
+        TODO: add stats and utilizations
         """
-        # TODO: add stats and utilizations
         entry = content['entries'][0]
         wanted_metadata = ['draftGroupId', 'contestKey', 'entryKey', 'lineupId', 'userName', 'userKey']
         wanted_scorecard = ['displayName', 'draftableId']
         draft_metadata = {k:entry.get(k) for k in wanted_metadata}
         try:
-            roster = entry['roster']
-            return [dict(**draft_metadata, **{k: player[k] for k in wanted_scorecard})
-                    for player in roster['scorecards']]       
+            vals = []
+            for player in entry['roster']['scorecards']:
+                d = {k: player[k] for k in wanted_scorecard}
+                if playerd:
+                    d = dict(**d, **playerd.get(d['draftableId'], {}))
+                vals.append(dict(**draft_metadata, **d))
+            return vals
+
         except KeyError:
             logging.exception(entry)
-            return None
+            return []
 
     def filter_contests_by_size(self, data, size=None):
         """Filters mycontests for specific type, say 3-Player"""
@@ -151,43 +217,95 @@ class Parser:
         else:
             raise ValueError('htmlfn or jsonfn cannot both be None')
 
-    def ownership(self, rosters):
+    def ownership(self, rosterdf, username, contest_size=None):
         """Calculates ownership across rosters
 
         Args:
-            rosters (list): of list of dict
+            rosterdf (DataFrame): of rosters
+            username (str): the username to get ownership for
 
         Returns:
-            DataFrame
+            DataFrame with columns
+            displayName, n_contests, n_own, vs_field
         """
-        # TODO: add player positions
-        flattened = [item for sublist in rosters for item in sublist]
-        df = pd.concat([self._to_dataframe(flattened).displayName.value_counts(),
-                        self._to_dataframe(flattened).displayName.value_counts(normalize=True)],
-                        axis=1).reset_index()
-        df.columns = ['player', 'n', 'pct']
-        return df
+        # first determine overall ownership
+        # will be some players I don't own that 
+        # are excluded if start with my ownership
+        n_contests = len(rosterdf['contestKey'].unique())
+        overall_ownership = (
+            rosterdf
+            .groupby('displayName')
+            .agg(tot_drafted=('contestKey', 'count')) 
+            .assign(tot_drafted_pct=lambda df_: df_.tot_drafted/n_contests*100)
+        )
 
+        summ = (
+            rosterdf
+            .query(f"userName == '{username}'")
+            .groupby('displayName')
+            .agg(user_drafted=('contestKey', 'count'))
+            .assign(user_drafted_pct=lambda df_: df_.user_drafted/n_contests*100)
+        )
 
+        df = overall_ownership.loc[:, ['tot_drafted_pct']].join(summ, how='left').fillna(0)
+        df['user_drafted'] = df['user_drafted'].astype(int)
+
+        if contest_size:
+            df['vs_field'] = df['user_drafted_pct'] - (df['tot_drafted_pct'] / contest_size)
+
+        df.insert(0, 'n_contests', n_contests)
+        return df    
+
+    def player_pool(self, draftables=None, id=None):
+        """Takes parsed draftables (from file or request) and creates player pool
+           Can also pass id and will read draftables file from data directory
+
+        Args:
+            draftables (dict): parsed JSON resource 
+            id (int): draftables Id
+
+        Returns:
+            list: of dict with keys
+            'draftableId', 'displayName', 'playerId', 'playerDkId', 'position', 'teamAbbreviation'
+        """
+        if id:
+            fn = self._draftablesfn(id)
+            draftables = self._to_obj(fn)
+        if not isinstance(draftables, dict):
+            raise ValueError('Did not properly load draftables')
+        wanted = ('draftableId', 'playerId', 'playerDkId', 'teamId',
+                'displayName', 'position', 'teamAbbreviation')
+        return [{k: item[k] for k in wanted} for item in draftables['draftables']]
+    
+    def player_pool_dict(self, draftables=None, id=None):
+        """Takes parsed draftables (from file or request) and creates player pool dict with key of draftableId
+           Can also pass id and will read draftables file from data directory
+
+        Args:
+            draftables (dict): parsed JSON resource 
+            id (int): draftables Id
+
+        Returns:
+            dict of dict: key is draftableId, 
+            value is dict with keys 'displayName', 'playerId', 'playerDkId', 'position', 'teamAbbreviation'
+        """
+        wanted = ('displayName', 'playerId', 'playerDkId', 'position', 'teamAbbreviation')
+        return {item['draftableId']: {k:item[k] for k in wanted}
+                for item in self.player_pool(draftables=draftables, id=id)}
+    
     def standings(self, leaderboards, username):
         """Calculates overall standings for user by contest type
         
         Args:
-            leaderboards (list): of list of dict
+            leaderboards (list): of dict
             username (str): the user to track standings for
 
         Returns:
             DataFrame
         """
-        items = []
-        for lb in leaderboards:
-            match = [item for item in lb if item['userName'] == username]
-            if match:
-                match = match[0]
-                match['contest_size'] = len(lb)
-                items.append(match)
-        return pd.DataFrame(items)
+        return pd.DataFrame(leaderboards).query(f"userName == '{username}'")
 
 
+# %%
 if __name__ == '__main__':
     pass
