@@ -1,22 +1,74 @@
-# %%
 import datetime
 import json
 import logging
 import os
 from pathlib import Path
 import re
+import pytz
+import time
 
 import numpy as np
 import pandas as pd
+from requests_html import HTMLSession
+import browser_cookie3
 
-"""
-Log:
-* 10/9/2020: 
-next step is ownership method
-right now reads files rather than list of dict. Can get more code from ipython session 528. 
-select * from history where session = 528
 
-"""
+class Scraper:
+    """Scrape DK site for data"""
+
+    def __init__(self, user_id=None):
+        logging.getLogger(__file__).addHandler(logging.NullHandler())
+        if not user_id:
+            self.user_id = os.getenv('DK_USER_ID')
+        self.s = HTMLSession()
+        self.s.headers.update({
+            'Connection': 'keep-alive',
+            'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/86.0.4240.75 Safari/537.36',
+            'DNT': '1',
+            'Accept': '*/*',
+            'Origin': 'https://www.draftkings.com',
+            'Sec-Fetch-Site': 'same-site',
+            'Sec-Fetch-Mode': 'cors',
+            'Sec-Fetch-Dest': 'empty',
+            'Referer': 'https://www.draftkings.com/',
+            'Accept-Language': 'en-US,en;q=0.9,ar;q=0.8',
+        })
+        self.cj = browser_cookie3.firefox()
+
+    @property
+    def api_url(self):
+        return 'https://api.draftkings.com/'
+
+    @property
+    def base_params(self):
+        return {'format': 'json'}
+
+    def _embed_params(self, embed_type):
+        return dict(**self.base_params, **{'embed': embed_type})
+
+    def contest_leaderboard(self, contest_id):
+        """Gets contest leaderboard"""
+        url = self.api_url + f'scores/v1/megacontests/{contest_id}/leaderboard'
+        params = self._embed_params('leaderboard')
+        return self.get_json(url, params=params)
+
+    def contest_roster(self, draftgroup_id, entry_key):
+        """Gets contest roster"""
+        url = self.api_url + f'scores/v2/entries/{draftgroup_id}/{entry_key}'
+        params = self._embed_params('roster')
+        return self.get_json(url, params=params)
+        
+    def get_json(self, url, params, headers=None, response_object=False):
+        """Gets json resource"""
+        headers = headers if headers else {}
+        r = self.s.get(url, params=params, headers=headers, cookies=self.cj)
+        if response_object:
+            return r
+        try:
+            return r.json()
+        except:
+            return r.content()
+
 
 class Parser:
     """
@@ -179,6 +231,14 @@ class Parser:
         """Filters mycontests for specific type, say 3-Player"""
         return [c for c in data if f'{size}-Player' in c['ContestName']]
 
+    def get_entry_key(self, leaderboard, username):
+        """Gets entry key from leaderboard"""
+        try:
+            return [l['MegaEntryKey'] for l in leaderboard['Leaderboard'] if l['UserName'] == username][0]
+        except (IndexError, KeyError):
+            return [l['EntryKey'] for l in leaderboard['Leaderboard'] if l['UserName'] == username][0]
+        raise ValueError(f"No entry key available for contest {leaderboard['Leader']['MegaContestKey']}") 
+
     def is_bestball_contest(self, content):
         """Tests if it is a bestball contest
         
@@ -309,6 +369,6 @@ class Parser:
         return pd.DataFrame(leaderboards).query(f"userName == '{username}'")
 
 
-# %%
+
 if __name__ == '__main__':
     pass
