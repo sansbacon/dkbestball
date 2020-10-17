@@ -191,15 +191,18 @@ class Parser:
             list: of dict
         """
         vals = []
-        wanted = ['userName', 'userKey', 'rank', 'fantasyPoints']
-        for item in content['leaderBoard']:
+        wanted = ['UserName', 'UserKey', 'Rank', 'FantasyPoints']
+        lbkey = 'Leaderboard'
+        ckey = 'MegaContestKey'
+        for item in content[lbkey]:
             d = {k:item.get(k) for k in wanted}
-            d['contestKey'] = content['contestKey']
+            d[ckey] = item[ckey]
             vals.append(d)
         return vals
 
     def contest_roster(self, content, playerd=None):
-        """Parses roster from single contest. DK doesn't seem to have saved draft order.
+        """Parses roster from single contest. 
+           DK doesn't seem to have saved draft order.
 
         Args:
             content (dict): parsed draft resource
@@ -366,7 +369,7 @@ class Parser:
         Returns:
             DataFrame
         """
-        return pd.DataFrame(leaderboards).query(f"userName == '{username}'")
+        return pd.DataFrame(leaderboards).query(f"UserName == '{username}'")
 
 
 

@@ -1,3 +1,6 @@
+# test_dkbestball.py
+# SET DK_BESTBALL_USERNAME env variable if not exist
+
 import json
 import os
 import random
@@ -54,11 +57,8 @@ def username():
     try:
         return MY_USERNAME
     except NameError:
-        un = os.getenv('DK_BESTBALL_USERNAME')
-        if un:
-            return un
-        else:
-            return 'sansbacon'
+        return os.getenv('DK_BESTBALL_USERNAME')
+
 
 def test_pctcol(p):
     """Tests pctcol"""
@@ -106,7 +106,7 @@ def test_contest_leaderboard(p, leaderboardfile):
     lb = p.contest_leaderboard(json.loads(leaderboardfile.read_text()))
     assert isinstance(lb, list)
     assert isinstance(random.choice(lb), dict)
-    fields = {'userName', 'userKey', 'rank', 'fantasyPoints', 'contestKey'}
+    fields = {'UserName', 'UserKey', 'Rank', 'FantasyPoints', 'ContestKey'}
     for item in lb:
         assert fields == set(item.keys())
 
@@ -159,7 +159,7 @@ def test_player_pool(p, tprint):
     assert isinstance(pool, list)
     player = random.choice(pool)
     assert isinstance(player, dict)
-    fields = {'draftableId', 'playerId', 'playerDkId', 'teamId',
+    fields = {'draftableId', 'playerId', 'playerDkId',
               'displayName', 'position', 'teamAbbreviation'}
     assert fields == set(player.keys())
     
@@ -187,5 +187,5 @@ def test_standings(p, datadir, username, tprint):
 
     # test standings df
     df = p.standings(leaderboards, username)
-    fields = {'userName', 'userKey', 'rank', 'fantasyPoints', 'contestKey'}
+    fields = {'UserName', 'UserKey', 'Rank', 'FantasyPoints', 'MegaContestKey'}
     assert set(df.columns) == fields

@@ -1,19 +1,31 @@
 # parse_files.py
 # gets leaderboards and scoring from local directories
 # run this after updating those files with get_files.py
+# %%
 import logging
 from pathlib import Path
 import pandas as pd
-from dkbestball import Parser
 
+try:
+    from dkbestball import Parser
+except ModuleNotFoundError:
+    import sys
+    pth = Path(__file__).parent.parent
+    sys.path.append(str(pth))
+    from dkbestball import Parser
+
+# %%
 def run():
-    """Main script"""    
+    """Main script
+    
+    TODO: need to adjust to TitleCase keys from draftkings
+    """    
+    p = Parser()
     
     # STEP ONE: get list of bestball contests (mycontests)
     # https://www.draftkings.com/mycontests
 
     mycontestsfile = Path(__file__).parent.parent / 'tests' / 'mycontests.html'
-    p = Parser()
     mycontests = p.mycontests(mycontestsfile)
 
     # STEP TWO: extract relevant data from mycontests
@@ -29,7 +41,7 @@ def run():
 
     # STEP FOUR: get contest standings (DK calls these leaderboards)
     lb = []
-    for pth in p.LEADERBOARD_DIR.glob('*.json'):
+    for pth in list(p.LEADERBOARD_DIR.glob('*.json'))[0:1]:
         data = p._to_obj(pth)
         lb += p.contest_leaderboard(data)
 
@@ -47,6 +59,8 @@ def run():
         contest_key = int(roster['contestKey'])
         roster['MaxNumberPlayers'] = sized.get(contest_key)    
 
+
+# %%
 if __name__ == '__main__':
     logging.basicConfig(level=logging.INFO)
     run()
