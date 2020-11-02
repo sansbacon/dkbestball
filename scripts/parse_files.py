@@ -2,7 +2,8 @@
 # gets leaderboards and scoring from local directories
 # run this after updating those files with get_files.py
 # TODO: turn into cli
-
+# TODO: cache the ownership data and contest lists
+from functools import lru_cache
 import logging
 from pathlib import Path
 import pandas as pd
@@ -13,6 +14,7 @@ from dkbestball import Parser
 logging.basicConfig(level=logging.INFO)
 
 
+@lru_cache(maxsize=None)
 def contests(fn, filter_size=None):
     p = Parser()
     mycontests = p.mycontests(fn)
@@ -21,24 +23,12 @@ def contests(fn, filter_size=None):
     return mycontests
 
 
+@lru_cache(maxsize=None)
 def contest_ids(contests):
     return [item['ContestId'] for item in contests]
 
 
-def rosters():
-    p = Parser()
-    rosters = []
-    for pth in p.ROSTER_DIR.glob('*.json'):
-        data = p._to_obj(pth)
-        playerd = p.player_pool_dict(id=data['entries'][0]['draftGroupId'])
-        rosters += p.contest_roster(data, playerd)
-    return rosters
-    #rosterdf = pd.DataFrame(rosters)   
-    #df.displayName.value_counts(normalize=True).mul(900).sort_values(ascending=False)
-
-    #############################################################
-
-
+@lru_cache(maxsize=None)
 def ownership():
     p = Parser()
     mycontestsfile = Path.home() / 'workspace' / 'dkbestball' / 'tests' / 'mycontests.html'
@@ -62,17 +52,29 @@ def ownership():
             playerd = p.player_pool_dict(id=data['entries'][0]['draftGroupId'])
             rosters += p.contest_roster(data, playerd)
 
-    # print summary
-    (
+
+@lru_cache(maxsize=None)
+def ownership_display(rosters, tot):
+    return (
       pd.DataFrame(rosters)
       .groupby(['displayName', 'position', 'teamAbbreviation'])
       .agg(n=('userName', 'count'))
-      .assign(tot=len(tman_ids))
+      .assign(tot=tot)
       .assign(pct=lambda df_: (df_.n / df_.tot).mul(100).round(1))
       .reset_index()
       .sort_values('pct', ascending=False)
-      .head(50)
     )
+
+
+@lru_cache(maxsize=None)
+def rosters():
+    p = Parser()
+    rosters = []
+    for pth in p.ROSTER_DIR.glob('*.json'):
+        data = p._to_obj(pth)
+        playerd = p.player_pool_dict(id=data['entries'][0]['draftGroupId'])
+        rosters += p.contest_roster(data, playerd)
+    return rosters
 
 
 if __name__ == '__main__':
