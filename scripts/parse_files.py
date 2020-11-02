@@ -1,66 +1,79 @@
 # parse_files.py
 # gets leaderboards and scoring from local directories
 # run this after updating those files with get_files.py
-# %%
+# TODO: turn into cli
+
 import logging
 from pathlib import Path
 import pandas as pd
 
-try:
-    from dkbestball import Parser
-except ModuleNotFoundError:
-    import sys
-    pth = Path(__file__).parent.parent
-    sys.path.append(str(pth))
-    from dkbestball import Parser
+from dkbestball import Parser
 
-# %%
-def run():
-    """Main script
-    
-    TODO: need to adjust to TitleCase keys from draftkings
-    """    
+
+logging.basicConfig(level=logging.INFO)
+
+
+def contests(fn, filter_size=None):
     p = Parser()
-    
-    # STEP ONE: get list of bestball contests (mycontests)
-    # https://www.draftkings.com/mycontests
+    mycontests = p.mycontests(fn)
+    if filter_size:
+        return p.filter_contests_by_size(mycontests, size=filter_size)
+    return mycontests
 
-    mycontestsfile = Path(__file__).parent.parent / 'tests' / 'mycontests.html'
-    mycontests = p.mycontests(mycontestsfile)
 
-    # STEP TWO: extract relevant data from mycontests
-    # so for each contest in mycontests, call contest_details
-    # create dict of dicts with key = ContestId
+def contest_ids(contests):
+    return [item['ContestId'] for item in contests]
 
-    contest_details_dict = {c['ContestId']: p.contest_details(c) for c in mycontests}
-     
-    # STEP THREE: get playerpool
-    # for 2020, have draftgroup of 37604 or 37605
-    # can get playerpool for both to match up with contests
-    pool = {id: p.player_pool(id=id) for id in (37604, 37605)}
 
-    # STEP FOUR: get contest standings (DK calls these leaderboards)
-    lb = []
-    for pth in list(p.LEADERBOARD_DIR.glob('*.json'))[0:1]:
-        data = p._to_obj(pth)
-        lb += p.contest_leaderboard(data)
-
-    # STEP FIVE: get contest rosters
+def rosters():
+    p = Parser()
     rosters = []
     for pth in p.ROSTER_DIR.glob('*.json'):
         data = p._to_obj(pth)
         playerd = p.player_pool_dict(id=data['entries'][0]['draftGroupId'])
         rosters += p.contest_roster(data, playerd)
+    return rosters
+    #rosterdf = pd.DataFrame(rosters)   
+    #df.displayName.value_counts(normalize=True).mul(900).sort_values(ascending=False)
 
-    # STEP SIX: match contest details to rosters
-    # Create a dict of contestkey: contest size
-    sized = {item['ContestId']: item['MaxNumberPlayers'] for item in contest_details_dict.values()}
-    for roster in rosters:
-        contest_key = int(roster['contestKey'])
-        roster['MaxNumberPlayers'] = sized.get(contest_key)    
+    #############################################################
 
 
-# %%
+def ownership():
+    p = Parser()
+    mycontestsfile = Path.home() / 'workspace' / 'dkbestball' / 'tests' / 'mycontests.html'
+    mycontests = p.mycontests(mycontestsfile)
+    tman_ids = [item['ContestId'] for item in p.filter_contests_by_size(mycontests, size=3)]
+
+    # have to get entry keys from contests
+    # then can find associated rosters
+    entry_keys = []    
+    for pth in [item for item in p.LEADERBOARD_DIR.glob('*.json')]:
+        if int(pth.stem) in tman_ids:
+            data = p._to_obj(pth)
+            lbdf = pd.DataFrame(p.contest_leaderboard(data))
+            entry_keys.append(lbdf.loc[lbdf['UserName'] == 'sansbacon', 'MegaEntryKey'].values[0])
+
+    # find associated rosters
+    rosters = []
+    for pth in p.ROSTER_DIR.glob('*.json'):
+        if pth.stem in entry_keys:
+            data = p._to_obj(pth)
+            playerd = p.player_pool_dict(id=data['entries'][0]['draftGroupId'])
+            rosters += p.contest_roster(data, playerd)
+
+    # print summary
+    (
+      pd.DataFrame(rosters)
+      .groupby(['displayName', 'position', 'teamAbbreviation'])
+      .agg(n=('userName', 'count'))
+      .assign(tot=len(tman_ids))
+      .assign(pct=lambda df_: (df_.n / df_.tot).mul(100).round(1))
+      .reset_index()
+      .sort_values('pct', ascending=False)
+      .head(50)
+    )
+
+
 if __name__ == '__main__':
-    logging.basicConfig(level=logging.INFO)
-    run()
+    pass

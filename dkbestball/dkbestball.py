@@ -1,11 +1,74 @@
-import datetime
+"""
+dkbestball.py
+
+Examples:
+
+    # OVERALL OWNERSHIP
+
+    from pathlib import Path
+    import pandas as pd
+    from dkbestball import Parser
+
+    p = Parser()
+
+    # mulitply by 900 due to roster size + appear as % rather than decimal
+    rosters = []
+    for pth in p.ROSTER_DIR.glob('*.json'):
+        data = p._to_obj(pth)
+        playerd = p.player_pool_dict(id=data['entries'][0]['draftGroupId'])
+        rosters += p.contest_roster(data, playerd)
+    rosterdf = pd.DataFrame(rosters)   
+    df.displayName.value_counts(normalize=True).mul(900).sort_values(ascending=False)
+
+    #############################################################
+
+    # 3-MAN OWNERSHIP
+
+    from pathlib import Path
+    import pandas as pd
+    from dkbestball import Parser
+
+    p = Parser()
+
+    mycontestsfile = Path.home() / 'workspace' / 'dkbestball' / 'tests' / 'mycontests.html'
+    mycontests = p.mycontests(mycontestsfile)
+    tman_ids = [item['ContestId'] for item in p.filter_contests_by_size(mycontests, size=3)]
+
+    # have to get entry keys from contests
+    # then can find associated rosters
+    entry_keys = []    
+    for pth in [item for item in p.LEADERBOARD_DIR.glob('*.json')]:
+        if int(pth.stem) in tman_ids:
+            data = p._to_obj(pth)
+            lbdf = pd.DataFrame(p.contest_leaderboard(data))
+            entry_keys.append(lbdf.loc[lbdf['UserName'] == 'sansbacon', 'MegaEntryKey'].values[0])
+
+    # find associated rosters
+    rosters = []
+    for pth in p.ROSTER_DIR.glob('*.json'):
+        if pth.stem in entry_keys:
+            data = p._to_obj(pth)
+            playerd = p.player_pool_dict(id=data['entries'][0]['draftGroupId'])
+            rosters += p.contest_roster(data, playerd)
+
+    # print summary
+    (rosterdf
+    .groupby(['displayName', 'position', 'teamAbbreviation'])
+    .agg(n=('userName', 'count'))
+    .assign(tot=len(tman_ids))
+    .assign(pct=lambda df_: (df_.n / df_.tot).mul(100).round(1))
+    .reset_index()
+    .sort_values('pct', ascending=False)
+    .head(50))
+
+"""
+
+from collections import ChainMap
 import json
 import logging
 import os
 from pathlib import Path
 import re
-import pytz
-import time
 
 import numpy as np
 import pandas as pd
@@ -194,9 +257,11 @@ class Parser:
         wanted = ['UserName', 'UserKey', 'Rank', 'FantasyPoints']
         lbkey = 'Leaderboard'
         ckey = 'MegaContestKey'
+        ekey = 'MegaEntryKey'
         for item in content[lbkey]:
             d = {k:item.get(k) for k in wanted}
             d[ckey] = item[ckey]
+            d[ekey] = item[ekey]
             vals.append(d)
         return vals
 
@@ -222,7 +287,7 @@ class Parser:
             for player in entry['roster']['scorecards']:
                 d = {k: player[k] for k in wanted_scorecard}
                 if playerd:
-                    d = dict(**d, **playerd.get(d['draftableId'], {}))
+                    d = dict(ChainMap(d, playerd.get(d['draftableId'], {})))
                 vals.append(dict(**draft_metadata, **d))
             return vals
 
