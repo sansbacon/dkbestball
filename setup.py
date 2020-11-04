@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """
 setup.py
 
@@ -17,9 +18,12 @@ def run():
           author_email="eric@erictruett.com",
           license="MIT",
           packages=find_packages(),
-          package_data={'dkbestball.data': ['*.json']},
-          zip_safe=False
-        )
+          package_data={
+              'dkbestball': [
+                  'data/*.*', 'data/leaderboards/*.*', 'data/rosters/*.*'
+              ]
+          },
+          zip_safe=False)
 
 
 if __name__ == '__main__':

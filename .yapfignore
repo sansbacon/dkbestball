@@ -1,0 +1,5 @@
+test_*.py
+__init__.py
+*.html
+*.md
+*.pyc
