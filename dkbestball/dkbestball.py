@@ -65,7 +65,7 @@ Examples:
     .head(50))
 
 """
-from collections import ChainMap
+from collections import ChainMap, defaultdict
 from functools import lru_cache
 import json
 import logging
@@ -213,7 +213,6 @@ class Parser:
         Returns:
             list: of dict
 
-        TODO: add stats and utilizations
         """
         entry = content['entries'][0]
         wanted_metadata = [
@@ -222,34 +221,21 @@ class Parser:
         ]
         wanted_scorecard = ['displayName', 'draftableId']
         draft_metadata = {k: entry.get(k) for k in wanted_metadata}
-        try:
-            vals = []
-            for player in entry['roster']['scorecards']:
-                d = {k: player[k] for k in wanted_scorecard}
-                if playerd:
-                    d = dict(ChainMap(d, playerd.get(d['draftableId'], {})))
-                vals.append(dict(**draft_metadata, **d))
-            return vals
-
-        except KeyError:
-            logging.exception(entry)
-            return []
+        vals = []
+        for player in entry['roster']['scorecards']:
+            d = {k: player[k] for k in wanted_scorecard}
+            if playerd:
+                d = dict(ChainMap(d, playerd.get(d['draftableId'], {})))
+            vals.append(dict(**draft_metadata, **d))
+        return vals
 
     def get_entry_key(self, leaderboard, username):
         """Gets entry key from leaderboard"""
-        try:
-            return [
-                lbd['MegaEntryKey']
-                for lbd in leaderboard['Leaderboard']
-                if lbd['UserName'] == username
-            ][0]
-        except (IndexError, KeyError):
-            return [
-                lbd['EntryKey']
-                for lbd in leaderboard['Leaderboard']
-                if lbd['UserName'] == username
-            ][0]
-        raise ValueError("No entry key available for contest")
+        return [
+            lbd['MegaEntryKey']
+            for lbd in leaderboard['Leaderboard']
+            if lbd['UserName'] == username
+        ][0]
 
     def is_bestball_contest(self, content):
         """Tests if it is a bestball contest
@@ -359,17 +345,32 @@ class Analyzer:
 
     @lru_cache(maxsize=128)
     def myleaderboards(self):
-        with self.leaderboards_path.open('rb') as f:
+        with self.myleaderboards_path.open('rb') as f:
             return pickle.load(f)
 
     @lru_cache(maxsize=128)
     def myrosters(self):
-        with self.rosters_path.open('rb') as f:
+        with self.myrosters_path.open('rb') as f:
             return pickle.load(f)
 
     def ownership(self):
-        # STOPPED HERE 11/3
-        pass
+        df = pd.DataFrame(self.myrosters())
+        return (df.groupby(['displayName', 'position', 'teamAbbreviation'],
+                           as_index=False).agg(n=('userName', 'count')).assign(
+                               tot=len(df['entryKey'].unique())).assign(
+                                   pct=lambda df_: (df_.n / df_.tot).mul(100)
+                                   .round(1)).sort_values('pct',
+                                                          ascending=False))
+
+    def positional_ownership(self, df, pos, thresh=10):
+        """Gets positional ownership"""
+        return (df.groupby(
+            ['displayName', 'position', 'teamAbbreviation'],
+            as_index=False).agg(n=('userName', 'count')).assign(
+                tot=len(df['entryKey'].unique())).assign(pct=lambda df_: (
+                    df_.n / df_.tot).mul(100).round(1)).sort_values(
+                        'pct', ascending=False).query(
+                            'position == "{pos}" and pct > {thresh}'))
 
 
 class Updater:
@@ -391,6 +392,10 @@ class Updater:
         return self.datadir / 'myentrykeys.pkl'
 
     @property
+    def myleaderboarddir_path(self):
+        return self.datadir / 'leaderboards'
+
+    @property
     def myleaderboards_path(self):
         return self.datadir / 'myleaderboards.pkl'
 
@@ -398,51 +403,59 @@ class Updater:
     def myrosters_path(self):
         return self.datadir / 'myrosters.pkl'
 
+    @property
+    def myrosterdir_path(self):
+        return self.datadir / 'rosters'
+
     def mycontests(self):
         """Gets contests"""
         mycontestsfile = self.datadir / 'mycontests.html'
         return self._p.mycontests(mycontestsfile)
+
+    def update_analysis_files(self):
+        """Updates analysis files"""
+        print('updated analysis files')
 
     def update_parsed_files(self):
         """Updates pickled files of leaderboards and rosters"""
 
         # mycontests
         with self.mycontests_path.open('wb') as f:
-            pickle.dump(self.mycontests(), f)
+            mycontests = self.mycontests()
+            pickle.dump(mycontests, f)
 
-        # myentrykeys
-        entry_keys = {}
-        for pth in self._p.LEADERBOARD_DIR.glob('*.json'):
+        # leaderboards and entrykeys
+        mylbs = []
+        entry_keys = defaultdict(list)
+        for pth in self.myleaderboarddir_path.glob('*.json'):
             data = self._p._to_obj(pth)
             leaderboard = self._p.contest_leaderboard(data)
-            myentry = [
-                item for item in leaderboard
-                if item['UserName'] == self.username
-            ][0]
-            contest_key = int(myentry['MegaContestKey'])
-            entry_key = int(myentry['MegaEntryKey'])
-            entry_keys[contest_key] = entry_key
+            mylbs.append(leaderboard)
+            for item in leaderboard:
+                contest_key = int(item['MegaContestKey'])
+                entry_key = int(item['MegaEntryKey'])
+                entry_keys[contest_key].append(entry_key)
 
+        # save to disk
         with self.myentrykeys_path.open('wb') as f:
             pickle.dump(entry_keys, f)
-
-        # myleaderboards
-        mylbs = [
-            self._p._to_obj(pth)
-            for pth in self._p.LEADERBOARD_DIR.glob('*.json')
-        ]
         with self.myleaderboards_path.open('wb') as f:
             pickle.dump(mylbs, f)
 
         # myrosters
         myrosters = []
-        for pth in self._p.ROSTER_DIR.glob('*.json'):
+        for pth in self.myrosterdir_path.glob('*.json'):
             data = self._p._to_obj(pth)
             draftable_id = data['entries'][0]['draftGroupId']
             draftable_path = self.datadir / f'draftables_{draftable_id}.json'
             draftables = self._p._to_obj(draftable_path)
             playerd = self._p.player_pool_dict(draftables=draftables)
-            myrosters += self._p.contest_roster(data, playerd)
+            try:
+                myrosters += self._p.contest_roster(data, playerd)
+            except KeyError:
+                contest_key = data['entries'][0]['contestKey']
+                entry_key = data['entries'][0]['entryKey']
+                print(f"No roster for contest {contest_key}, entry {entry_key}")
         with self.myrosters_path.open('wb') as f:
             pickle.dump(myrosters, f)
 
@@ -453,30 +466,29 @@ class Updater:
             # get contest and draftgroup ids
             contest_id = item['ContestId']
             draftgroup_id = item['DraftGroupId']
+            logging.info(
+                f'starting contest {contest_id}, draftgroup {draftgroup_id}')
 
             # save leaderboard to disk
             pth = self.datadir / 'leaderboards' / f'{contest_id}.json'
             if not pth.is_file():
-                logging.info('Getting %s', contest_id)
                 lb = self._s.contest_leaderboard(contest_id=contest_id)
                 with pth.open('w') as fh:
                     json.dump(lb, fh)
-                time.sleep(1)
+                time.sleep(.1)
             else:
                 lb = self._p._to_obj(pth)
 
-            # now get roster
-            # get entry_key from leaderboard
-            # sometimes is entry key, sometimes mega entry key
-            # is embedded in the user's results
-            entry_key = self._p.get_entry_key(lb, self.username)
-            pth = self.datadir / 'rosters' / f'{entry_key}.json'
-            if not pth.is_file():
-                logging.info('Getting %s', entry_key)
-                roster = self._s.contest_roster(draftgroup_id, entry_key)
-                with pth.open('w') as fh:
-                    json.dump(roster, fh)
-                time.sleep(1)
+            # now get rosters
+            # get entry_keys from leaderboard
+            for lb in self._p.contest_leaderboard(lb):
+                entry_key = int(lb['MegaEntryKey'])
+                pth = self.datadir / 'rosters' / f'{entry_key}.json'
+                if not pth.is_file():
+                    roster = self._s.contest_roster(draftgroup_id, entry_key)
+                    with pth.open('w') as fh:
+                        json.dump(roster, fh)
+                    time.sleep(.1)
 
 
 if __name__ == '__main__':
