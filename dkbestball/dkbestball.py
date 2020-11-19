@@ -67,12 +67,14 @@ Examples:
 """
 from collections import ChainMap, defaultdict
 from functools import lru_cache
+import itertools
 import json
 import logging
 from pathlib import Path
 import pickle
 import re
 import time
+import zipfile
 
 import browser_cookie3
 import pandas as pd
@@ -372,16 +374,30 @@ class Analyzer:
                         'pct', ascending=False).query(
                             'position == "{pos}" and pct > {thresh}'))
 
+    def standings(self):
+        """Gets standings dataframe"""
+        df = pd.DataFrame(itertools.chain.from_iterable(self.myleaderboards()))
+        df = df.loc[df.UserName == self.username, :]
+        df['MegaContestKey'] = df['MegaContestKey'].astype(int)
+        cdf = pd.DataFrame(self.mycontests())
+        wanted = [
+            'MegaContestId', 'ContestName', 'BuyInAmount', 'NumberOfEntrants',
+            'TokensWon'
+        ]
+        cdf = cdf.loc[:, wanted].set_index('MegaContestId')
+        return df.join(cdf, how='left', on='MegaContestKey')
+
 
 class Updater:
     """Encapsulates scraping/parsing activity for weekly updates"""
 
-    def __init__(self, username, datadir):
+    def __init__(self, username, datadir, sleep_time=.1):
         logging.getLogger(__name__).addHandler(logging.NullHandler())
         self.username = username
         self.datadir = datadir
         self._s = Scraper()
         self._p = Parser()
+        self.sleep_time = sleep_time
 
     @property
     def mycontests_path(self):
@@ -459,36 +475,44 @@ class Updater:
         with self.myrosters_path.open('wb') as f:
             pickle.dump(myrosters, f)
 
-    def update_raw_files(self):
+    def update_raw_files(self, update_rosters=False):
         """Updates leaderboards and rosters"""
+        # create new zip and overwrite old file if succeeds
+        zipfn = self.myleaderboarddir_path / 'leaderboards_new.zip'
+        old_zipfn = self.myleaderboarddir_path / 'leaderboards.zip'
+        with zipfile.ZipFile(zipfn, 'w') as myzip:
+            for pth in self.myleaderboarddir_path.glob('*.json'):
+                myzip.write(pth, pth.name)
+        zipfn.rename(old_zipfn)
+
+        # loop through contests
         for item in self.mycontests():
 
             # get contest and draftgroup ids
             contest_id = item['ContestId']
             draftgroup_id = item['DraftGroupId']
-            logging.info(
-                f'starting contest {contest_id}, draftgroup {draftgroup_id}')
+            msg = f'starting contest {contest_id}, dg {draftgroup_id}'
+            logging.info(msg)
 
             # save leaderboard to disk
             pth = self.datadir / 'leaderboards' / f'{contest_id}.json'
-            if not pth.is_file():
-                lb = self._s.contest_leaderboard(contest_id=contest_id)
-                with pth.open('w') as fh:
-                    json.dump(lb, fh)
-                time.sleep(.1)
-            else:
-                lb = self._p._to_obj(pth)
+            lb = self._s.contest_leaderboard(contest_id=contest_id)
+            with pth.open('w') as fh:
+                json.dump(lb, fh)
+            time.sleep(self.sleep_time)
 
-            # now get rosters
-            # get entry_keys from leaderboard
-            for lb in self._p.contest_leaderboard(lb):
-                entry_key = int(lb['MegaEntryKey'])
-                pth = self.datadir / 'rosters' / f'{entry_key}.json'
-                if not pth.is_file():
-                    roster = self._s.contest_roster(draftgroup_id, entry_key)
-                    with pth.open('w') as fh:
-                        json.dump(roster, fh)
-                    time.sleep(.1)
+            if update_rosters:
+                # now get rosters
+                # get entry_keys from leaderboard
+                for lb in self._p.contest_leaderboard(lb):
+                    entry_key = int(lb['MegaEntryKey'])
+                    pth = self.datadir / 'rosters' / f'{entry_key}.json'
+                    if not pth.is_file():
+                        roster = self._s.contest_roster(draftgroup_id,
+                                                        entry_key)
+                        with pth.open('w') as fh:
+                            json.dump(roster, fh)
+                        time.sleep(self.sleep_time)
 
 
 if __name__ == '__main__':
