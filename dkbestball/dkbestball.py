@@ -4,65 +4,24 @@ dkbestball.py
 
 Examples:
 
-    # OVERALL OWNERSHIP
-
+    import os
     from pathlib import Path
-    import pandas as pd
-    from dkbestball import Parser
+    from dkbestball import Analyzer
 
-    p = Parser()
+    user = os.getenv('DK_BESTBALL_USER')
+    basedir = Path.home() / 'workspace' / 'dkbestball-data'
+    a = Analyzer(user, basedir)
 
-    # mulitply by 900 due to roster size + appear as % rather than decimal
-    rosters = []
-    for pth in p.ROSTER_DIR.glob('*.json'):
-        data = p._to_obj(pth)
-        playerd = p.player_pool_dict(id=data['entries'][0]['draftGroupId'])
-        rosters += p.contest_roster(data, playerd)
-    rosterdf = pd.DataFrame(rosters)
+    # show standings: tournament, 3man, 6man, 12man leagues
+    std = a.standings()
+    a.standings_summary(std, 't')
+    a.standings_summary(std, '3m')
+    a.standings_summary(std, '6m')
+    a.standings_summary(std, '12m')
 
-    #############################################################
+    # get ownership
 
-    # 3-MAN OWNERSHIP
-
-    from pathlib import Path
-    import pandas as pd
-    from dkbestball import Parser
-
-    p = Parser()
-
-    mycontestsfile = Path.home() / 'workspace/dkbestball/tests/mycontests.html'
-    mycontests = p.mycontests(mycontestsfile)
-    tman_ids = [item['ContestId']
-                for item in p.filter_contests_by_size(mycontests, size=3)]
-
-    # have to get entry keys from contests
-    # then can find associated rosters
-    entry_keys = []
-    for pth in [item for item in p.LEADERBOARD_DIR.glob('*.json')]:
-        if int(pth.stem) in tman_ids:
-            data = p._to_obj(pth)
-            lbdf = pd.DataFrame(p.contest_leaderboard(data))
-            criteria = lbdf['UserName'] == 'sansbacon'
-            tmp = lbdf.loc[criteria, 'MegaEntryKey'].values[0]
-            entry_keys.append(tmp)
-
-    # find associated rosters
-    rosters = []
-    for pth in p.ROSTER_DIR.glob('*.json'):
-        if pth.stem in entry_keys:
-            data = p._to_obj(pth)
-            playerd = p.player_pool_dict(id=data['entries'][0]['draftGroupId'])
-            rosters += p.contest_roster(data, playerd)
-
-    # print summary
-    (rosterdf
-    .groupby(['displayName', 'position', 'teamAbbreviation'])
-    .agg(n=('userName', 'count'))
-    .assign(tot=len(tman_ids))
-    .assign(pct=lambda df_: (df_.n / df_.tot).mul(100).round(1))
-    .reset_index()
-    .sort_values('pct', ascending=False)
-    .head(50))
+TODO: add financial measures
 
 """
 from collections import ChainMap, defaultdict
@@ -386,6 +345,59 @@ class Analyzer:
         ]
         cdf = cdf.loc[:, wanted].set_index('MegaContestId')
         return df.join(cdf, how='left', on='MegaContestKey')
+
+    def standings_summary(self, df, contest_type):
+        """Gets standing summary for contest type"""
+        s = {
+            '3m': '3-Player',
+            '6m': '6-Player',
+            '12m': '12-Player',
+            'pa': 'Action',
+            'm': 'Millionaire',
+            't': r'\['
+        }
+        std = self.standings()
+        std = std.loc[std.ContestName.str.contains(s.get(contest_type), ' '), :]
+        return (std['Rank'].value_counts().reset_index().sort_values(
+            'index').set_axis(['place', 'n_teams'], axis=1).assign(
+                pct=lambda df_: round(df_.n_teams / len(std), 2)))
+
+    def tournament_rosters(self):
+        """Gets roster for play-action & millionaire tournaments"""
+        myc = self.mycontests()
+        df = pd.DataFrame(myc)
+        r = self.myrosters()
+        rdf = pd.DataFrame(r)
+        rdf['contestKey'] = rdf['contestKey'].astype(int)
+
+        # play action
+        pa = df.loc[df.ContestName.str.contains('Play-Action'), :]
+        crit1 = rdf.contestKey.isin(pa.MegaContestId.values)
+        crit2 = rdf.userName == 'sansbacon'
+        mypa = rdf.loc[crit1 & crit2, :]
+        padf = (mypa.groupby(['displayName', 'position'], as_index=False).agg(
+            n_plyr=('draftableId', 'count')).assign(n=len(pa)).assign(
+                pct=lambda df_: round(df_.n_plyr / df_.n * 100, 2)).assign(
+                    contest='Play Action'))
+
+        # millionaire
+        mill = df.loc[df.ContestName.str.contains('Millionaire'), :]
+        crit1 = rdf.contestKey.isin(mill.MegaContestId.values)
+        crit2 = rdf.userName == 'sansbacon'
+        mym = rdf.loc[crit1 & crit2, :]
+        milldf = (mym.groupby(['displayName', 'position'], as_index=False).agg(
+            n_plyr=('draftableId', 'count')).assign(n=len(mill)).assign(
+                pct=lambda df_: round(df_.n_plyr / df_.n * 100, 2)).assign(
+                    contest='Millionaire'))
+        return pd.concat([padf, milldf], ignore_index=True)
+
+    def tournament_ownership(self, df, tournament=None, pos=None):
+        """Shows tournament ownership by tournament and position"""
+        if tournament:
+            df = df.loc[df.contest == tournament, :]
+        if pos:
+            df = df.loc[df.position == pos, :]
+        return df.sort_values('pct', ascending=False)
 
 
 class Updater:
