@@ -299,6 +299,20 @@ class Analyzer:
     def myrosters_path(self):
         return self.datadir / 'myrosters.pkl'
 
+    def contest_type(self, s):
+        """Gets contest type from contest name"""
+        if 'Millionaire' in s:
+            return 'Tournament'
+        if 'Play-Action' in s:
+            return 'Tournament'
+        if '12-Player' in s:
+            return '12-Man'
+        if '6-Player' in s:
+            return '6-Man'
+        if '3-Player' in s:
+            return '3-Man'
+        return 'Unknown'
+
     @lru_cache(maxsize=128)
     def mycontests(self):
         with self.mycontests_path.open('rb') as f:
@@ -314,24 +328,30 @@ class Analyzer:
         with self.myrosters_path.open('rb') as f:
             return pickle.load(f)
 
+    def financial_summary(self, contest_col='ContestName'):
+        """Summarizes financial results"""
+        std = self.standings()
+        std['ContestType'] = std[contest_col].apply(self.contest_type)
+        gb = std.groupby(['ContestType', 'BuyInAmount'], as_index=False)
+        aggs = (('UserKey', 'count'), ('BuyInAmount', 'sum'), ('TokensWon',
+                                                               'sum'))
+        summ = gb.agg(Entries=aggs[0], Paid=aggs[1], Won=aggs[2])
+        summ['ROI'] = ((summ.Won - summ.Paid) / summ.Paid).mul(100).round(1)
+        return summ
+
     def ownership(self):
         df = pd.DataFrame(self.myrosters())
-        return (df.groupby(['displayName', 'position', 'teamAbbreviation'],
-                           as_index=False).agg(n=('userName', 'count')).assign(
-                               tot=len(df['entryKey'].unique())).assign(
-                                   pct=lambda df_: (df_.n / df_.tot).mul(100)
-                                   .round(1)).sort_values('pct',
-                                                          ascending=False))
+        grpcols = ['displayName', 'position', 'teamAbbreviation']
+        gb = df.groupby(grpcols, as_index=False)
+        summ = gb.agg(n=('userName', 'count'))
+        summ['tot'] = len(df['entryKey'].unique())
+        summ['pct'] = (summ['n'] / summ['tot']).mul(100).round(1)
+        return summ.sort_values('pct', ascending=False)
 
     def positional_ownership(self, df, pos, thresh=10):
         """Gets positional ownership"""
-        return (df.groupby(
-            ['displayName', 'position', 'teamAbbreviation'],
-            as_index=False).agg(n=('userName', 'count')).assign(
-                tot=len(df['entryKey'].unique())).assign(pct=lambda df_: (
-                    df_.n / df_.tot).mul(100).round(1)).sort_values(
-                        'pct', ascending=False).query(
-                            'position == "{pos}" and pct > {thresh}'))
+        q = f'position == "{pos}" and pct > {thresh}'
+        return self.ownership().query(q)
 
     def standings(self):
         """Gets standings dataframe"""
@@ -362,6 +382,14 @@ class Analyzer:
             'index').set_axis(['place', 'n_teams'], axis=1).assign(
                 pct=lambda df_: round(df_.n_teams / len(std), 2)))
 
+    def tournament_roster(self, df, contest_key, wanted=None):
+        """Single tournament roster"""
+        default_wanted = ['displayName', 'position', 'teamAbbreviation']
+        wanted = wanted if wanted else default_wanted
+        crit1 = df.contestKey == str(contest_key)
+        crit2 = df.userName == self.username
+        return df.loc[crit1 & crit2, wanted]
+
     def tournament_rosters(self):
         """Gets roster for play-action & millionaire tournaments"""
         myc = self.mycontests()
@@ -375,20 +403,24 @@ class Analyzer:
         crit1 = rdf.contestKey.isin(pa.MegaContestId.values)
         crit2 = rdf.userName == 'sansbacon'
         mypa = rdf.loc[crit1 & crit2, :]
-        padf = (mypa.groupby(['displayName', 'position'], as_index=False).agg(
-            n_plyr=('draftableId', 'count')).assign(n=len(pa)).assign(
-                pct=lambda df_: round(df_.n_plyr / df_.n * 100, 2)).assign(
-                    contest='Play Action'))
+        gb = mypa.groupby(['displayName', 'position'], as_index=False)
+        padf = gb.agg(n_plyr=('draftableId', 'count'))
+        padf['n'] = len(pa)
+        padf['pct'] = (padf['n_plyr'] / padf['n']).mul(100).round(2)
+        padf['contest'] = 'Play Action'
 
         # millionaire
         mill = df.loc[df.ContestName.str.contains('Millionaire'), :]
         crit1 = rdf.contestKey.isin(mill.MegaContestId.values)
         crit2 = rdf.userName == 'sansbacon'
         mym = rdf.loc[crit1 & crit2, :]
-        milldf = (mym.groupby(['displayName', 'position'], as_index=False).agg(
-            n_plyr=('draftableId', 'count')).assign(n=len(mill)).assign(
-                pct=lambda df_: round(df_.n_plyr / df_.n * 100, 2)).assign(
-                    contest='Millionaire'))
+        gb = mym.groupby(['displayName', 'position'], as_index=False)
+        milldf = gb.agg(n_plyr=('draftableId', 'count'))
+        milldf['n'] = len(pa)
+        milldf['pct'] = (milldf['n_plyr'] / milldf['n']).mul(100).round(2)
+        milldf['contest'] = 'Millionaire'
+
+        # combined dataframes
         return pd.concat([padf, milldf], ignore_index=True)
 
     def tournament_ownership(self, df, tournament=None, pos=None):
