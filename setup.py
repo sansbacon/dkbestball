@@ -18,11 +18,7 @@ def run():
           author_email="eric@erictruett.com",
           license="MIT",
           packages=find_packages(),
-          package_data={
-              'dkbestball': [
-                  'data/*.*', 'data/leaderboards/*.*', 'data/rosters/*.*'
-              ]
-          },
+          entry_points={'console_scripts': ['dkbb=scripts.dkbb:main']},
           zip_safe=False)
 
 
