@@ -1,4 +1,0 @@
-[flake8]
-ignore = D203,E722,E501,E741
-exclude = .git,__pycache__,docs/*,conftest.py,test_*.py,build_docs.py,*.md,*.html, __init__.py
-max-complexity = 10

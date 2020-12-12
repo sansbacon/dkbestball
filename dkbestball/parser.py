@@ -1,5 +1,4 @@
 from collections import ChainMap
-import datetime
 from dateutil import tz
 import json
 import logging
@@ -76,13 +75,14 @@ class Parser:
 
         """
         vals = []
-        
+
         # keys differ based on the contest type
         # this is a preliminary approach to getting the right key
         wanted = ['UserName', 'UserKey', 'Rank', 'FantasyPoints']
         lbkey = 'Leaderboard' if 'Leaderboard' in content else 'leaderBoard'
         ckey = 'MegaContestKey' if 'MegaContestKey' in content else 'contestKey'
-        ekey = 'MegaEntryKey' if 'MegaEntryKey' in content[lbkey][0] else 'entryKey'
+        ekey = 'MegaEntryKey' if 'MegaEntryKey' in content[lbkey][
+            0] else 'entryKey'
 
         for item in content[lbkey]:
             d = {k: item.get(k) for k in wanted}
@@ -147,7 +147,7 @@ class Parser:
             list: of dict
 
         Example:
-        
+    
             "LiveContestsEntries", 
             "FinalizedContestsEntries", 
             "Contests"
@@ -211,8 +211,8 @@ class Parser:
             jsvar = match.group(1)
             mapping = {
                 'maxentrantsperpage :': '"maxentrantsperpage": ',
-                'live:': '"live":', 
-                'upcoming:': '"upcoming":', 
+                'live:': '"live":',
+                'upcoming:': '"upcoming":',
                 'history:': '"history":'
             }
 

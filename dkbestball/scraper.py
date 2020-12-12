@@ -28,7 +28,7 @@ class Scraper:
             self.s.cookies.update(browser_cookie3.firefox())
         else:
             raise ValueError('Only firefox cookies are supported at this time')
-        
+
     @property
     def api_url(self):
         return 'https://api.draftkings.com/'

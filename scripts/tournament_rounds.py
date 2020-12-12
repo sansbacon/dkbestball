@@ -5,14 +5,13 @@ from pathlib import Path
 import pandas as pd
 from dkbestball import Parser, Scraper
 
-
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
 s = Scraper()
 p = Parser()
 
-# draftgroupid 
+# draftgroupid
 draft_group_id = 42308
 basedir = Path(os.getenv('DKBESTBALL_DATA_DIR'))
 fn = basedir / 'draftables' / f'{draft_group_id}.json'
@@ -40,9 +39,6 @@ for item in [c for c in myc['live'] if 'Tournament Round' in c['ContestName']]:
 
 rdf = pd.DataFrame(rosters)
 
-(
-rdf
-.loc[rdf.userName == 'sansbacon', :]
-.groupby(['displayName', 'teamAbbreviation', 'position'], as_index=False)
-.agg(n=('entryKey','count'))
-)
+(rdf.loc[rdf.userName == 'sansbacon', :].groupby(
+    ['displayName', 'teamAbbreviation', 'position'],
+    as_index=False).agg(n=('entryKey', 'count')))
